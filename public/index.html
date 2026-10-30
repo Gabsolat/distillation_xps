@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Distillation Column Fault Diagnosis Expert System</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" rel="stylesheet">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+h1,h2,h3,h4,h5,.brand{font-family:Georgia,"Times New Roman",serif;letter-spacing:.2px}
+.topbar{background:linear-gradient(135deg,#0b1d3a,#1d4e89);color:#fff}
+.card{border-radius:.75rem;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.flow{display:flex;flex-wrap:wrap;gap:.5rem;align-items:stretch}
+.flow .st{flex:1 1 150px;border:1px solid var(--bs-border-color);border-radius:.6rem;padding:.6rem;background:var(--bs-tertiary-bg)}
+.flow .st h6{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--bs-secondary-color)}
+.flow .ar{align-self:center;color:var(--bs-secondary-color)}
+.cm td{text-align:center;min-width:46px}
+.eq{overflow-x:auto;padding:.4rem 0}
+.small-label{font-size:.78rem}
+</style></head>
+<body>
+<header class="topbar py-3"><div class="container d-flex justify-content-between align-items-center">
+<div><div class="brand h4 mb-0">Distillation Column Fault Diagnosis Expert System</div>
+<small class="opacity-75">Rule-based Prolog inference with deductive, abductive and consistency-based reasoning</small></div>
+<button id="themeBtn" class="btn btn-outline-light btn-sm" type="button">Dark mode</button></div></header>
+<div class="container my-4">
+<ul class="nav nav-pills mb-3" role="tablist">
+<li class="nav-item"><button class="nav-link active" id="tab-diag" data-bs-toggle="pill" data-bs-target="#p-diag" type="button">Diagnosis</button></li>
+<li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#p-kb" type="button">Knowledge base</button></li>
+<li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#p-val" type="button">Validation</button></li>
+<li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#p-th" type="button">Theory</button></li></ul>
+<div class="tab-content">
+<div class="tab-pane fade show active" id="p-diag"><div class="row g-3">
+<div class="col-xl-4"><div class="card p-3">
+<h5>Plant observations</h5>
+<p class="small text-body-secondary">Enter the available measurements. Blank fields are treated as not observed, and the system never infers a missing value.</p>
+<label class="small-label mb-1">Load a validation scenario</label>
+<select id="preset" class="form-select form-select-sm mb-2"><option value="">Select scenario</option></select>
+<label class="small-label mb-1">Reasoning mode</label>
+<select id="mode" class="form-select form-select-sm mb-3"><option value="full">Complete (deductive, abductive, consistency)</option><option value="deductive">Deductive only</option></select>
+<div class="row g-2" id="fields"></div>
+<div class="d-flex gap-2 mt-3"><button id="run" class="btn btn-primary flex-fill" type="button">Run diagnosis</button><button id="reset" class="btn btn-outline-secondary" type="button">Reset</button></div>
+<div id="err" class="text-danger small mt-2"></div></div></div>
+<div class="col-xl-8" id="result"><div class="card p-4 text-body-secondary">Run a diagnosis to see the verdict, explanation, reasoning trace and maintenance plan.</div></div>
+</div></div>
+<div class="tab-pane fade" id="p-kb"><div id="kb"></div></div>
+<div class="tab-pane fade" id="p-val"><div id="val"><div class="card p-4">Loading validation suite...</div></div></div>
+<div class="tab-pane fade" id="p-th"><div class="card p-4" id="theory"></div></div>
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+const api=(p,o)=>fetch(p,o).then(r=>{if(!r.ok)throw new Error('Server returned '+r.status);return r.json()});
+const u=s=>String(s).replace('deg C','°C'), pct=x=>(x*100).toFixed(1)+'%';
+let KB,TESTS,LAST,charts={};
+const STATUS={diagnosed:['Fault diagnosed','danger'],normal:['Normal operation','success'],ambiguous:['Ambiguous: competing hypotheses retained','warning'],hypothesis:['Abductive hypothesis: no complete signature matched','info'],inconclusive:['Inconclusive: no consistent hypothesis','secondary'],insufficient:['Insufficient observations: no diagnosis issued','secondary']};
+const badge=(t,c='secondary')=>`<span class="badge text-bg-${c} me-1 mb-1">${t}</span>`;
+const symTxt=id=>(KB.symptoms.find(s=>s.id===id)||{}).text||id;
+function mkChart(id,cfg){const el=document.getElementById(id);if(!el)return;if(charts[id])charts[id].destroy();
+ const s=getComputedStyle(document.documentElement);Chart.defaults.color=s.getPropertyValue('--bs-body-color');Chart.defaults.borderColor=s.getPropertyValue('--bs-border-color');
+ charts[id]=new Chart(el,cfg)}
+function setTheme(t){document.documentElement.setAttribute('data-bs-theme',t);localStorage.setItem('theme',t);$('#themeBtn').textContent=t==='dark'?'Light mode':'Dark mode';if(LAST)render(LAST);if(TESTS)drawTests()}
+$('#themeBtn').onclick=()=>setTheme(document.documentElement.getAttribute('data-bs-theme')==='dark'?'light':'dark');
+
+function buildForm(){$('#fields').innerHTML=KB.variables.map(v=>`<div class="col-6"><label class="small-label" for="in-${v.id}">${v.label} (${u(v.unit)})</label><input id="in-${v.id}" type="number" step="any" class="form-control form-control-sm" placeholder="ref ${v.ref}"></div>`).join('')}
+function fill(obs){KB.variables.forEach(v=>{$('#in-'+v.id).value=obs&&obs[v.id]!==undefined?obs[v.id]:''})}
+function collect(){const o={};KB.variables.forEach(v=>{const x=$('#in-'+v.id).value;if(x!=='')o[v.id]=parseFloat(x)});return o}
+async function run(){$('#err').textContent='';try{const r=await api('/api/diagnose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({obs:collect(),mode:$('#mode').value})});render(r)}catch(e){$('#err').textContent='Diagnosis request failed: '+e.message}}
+$('#run').onclick=run;
+$('#reset').onclick=()=>{fill(TESTS?TESTS.cases[0].obs:null);$('#preset').value=''};
+$('#preset').onchange=e=>{const c=TESTS.cases.find(x=>x.id===e.target.value);if(c)fill(c.obs)};
+function loadCase(id){const c=TESTS.cases.find(x=>x.id===id);fill(c.obs);$('#preset').value=id;bootstrap.Tab.getOrCreateInstance($('#tab-diag')).show();window.scrollTo(0,0)}
+window.loadCase=loadCase;
+
+function render(r){LAST=r;const [st,cl]=STATUS[r.status],d=r.diagnoses||[];
+ let h=`<div class="alert alert-${cl} d-flex justify-content-between flex-wrap mb-3"><div><strong>${st}</strong>${d.length?': '+d.map(x=>x.name).join('; '):''}</div><small>${r.nObs} observations, ${r.timeMs} ms, mode: ${r.mode}</small></div>`;
+ h+=`<div class="row g-3"><div class="col-lg-7"><div class="card p-3"><h6>Deviation from load-corrected reference (percent)</h6><canvas id="cDev" height="240"></canvas></div></div>
+ <div class="col-lg-5"><div class="card p-3"><h6>Evidence for selected hypotheses (percent)</h6>${d.length?'<canvas id="cEv" height="240"></canvas>':'<p class="small text-body-secondary mb-0">No fault hypothesis selected.</p>'}</div></div></div>`;
+ const st5=(t,b)=>`<div class="st"><h6>${t}</h6>${b}</div>`,ar='<div class="ar">&rarr;</div>';
+ h+=`<div class="card p-3 mt-3"><h6>Reasoning trace</h6><div class="flow">`+st5('1. Observations',`${r.nObs} validated measurements, ${r.deviations.length} normalised deviations`)+ar+
+ st5('2. Derived symptoms',r.symptoms.map(s=>badge(s.rule,'primary')).join('')||'None')+ar+
+ st5('3. Rules fired',r.rulesFired.map(x=>badge(x,'dark')).join('')||'None')+ar+
+ st5('4. Diagnosis',d.map(x=>badge(x.name,cl)).join('')||'None')+ar+
+ st5('5. Plan',`${r.plan.length} action(s)`)+`</div>`;
+ h+=`<div class="mt-3 small"><strong>Symptoms derived:</strong><ul class="mb-0">${r.symptoms.map(s=>`<li>${badge(s.rule,'primary')}${s.text}</li>`).join('')||'<li>None: all observed variables lie inside their reference bands.</li>'}</ul></div></div>`;
+ if(r.conflicts.length)h+=`<div class="alert alert-warning mt-3 mb-0"><strong>Conflicting evidence detected.</strong> ${r.conflicts.map(c=>c.text).join('; ')}. Affected readings are withdrawn from physical-fault reasoning by an exception to the default reliability assumption.</div>`;
+ d.forEach(x=>{h+=`<div class="card p-3 mt-3"><div class="d-flex justify-content-between"><h5 class="mb-2">${x.name}</h5><span class="small text-body-secondary">Rule ${x.rule}</span></div>
+ <p class="small mb-1"><strong>Core evidence present:</strong> ${x.core.map(symTxt).join('; ')||'none'}</p>
+ <p class="small mb-1"><strong>Supporting evidence present:</strong> ${x.support.map(symTxt).join('; ')||'none'}</p>
+ <p class="small mb-1"><strong>Core evidence missing:</strong> ${x.missing.map(symTxt).join('; ')||'none'}</p>
+ <p class="small mb-0">Signature match ${pct(x.match)}; relative evidence share ${pct(x.share)}. Explains ${x.explains.length} of ${r.symptoms.length} observed symptoms.</p></div>`});
+ if(r.rejected.length)h+=`<div class="card p-3 mt-3"><h6>Competing hypotheses rejected</h6><table class="table table-sm mb-0 small"><tbody>${r.rejected.map(x=>`<tr><td class="fw-semibold">${x.name}</td><td>${x.reason}</td></tr>`).join('')}</tbody></table></div>`;
+ if(r.plan.length)h+=`<div class="card p-3 mt-3"><h6>Corrective maintenance plan</h6><table class="table table-sm mb-0 small"><thead><tr><th>Priority</th><th>Fault</th><th>Action</th></tr></thead><tbody>${r.plan.map(p=>`<tr><td>${badge(p.class==='immediate'?'Immediate safety':'Routine',p.class==='immediate'?'danger':'secondary')}</td><td>${p.fault}</td><td>${p.action}</td></tr>`).join('')}</tbody></table></div>`;
+ $('#result').innerHTML=h;
+ const dv=r.deviations;mkChart('cDev',{type:'bar',data:{labels:dv.map(x=>x.label),datasets:[{data:dv.map(x=>+(x.dev*100).toFixed(2)),backgroundColor:dv.map(x=>Math.abs(x.dev)>0.1?'#d1495b':'#4f86c6')}]},options:{indexAxis:'y',plugins:{legend:{display:false}},maintainAspectRatio:true}});
+ if(d.length)mkChart('cEv',{type:'bar',data:{labels:d.map(x=>x.name),datasets:[{label:'Signature match',data:d.map(x=>x.match*100),backgroundColor:'#4f86c6'},{label:'Evidence share',data:d.map(x=>x.share*100),backgroundColor:'#e9a23b'}]},options:{scales:{y:{max:100}}}})}
+
+function drawKB(){let h=`<div class="card p-3 mb-3"><h5>Fault signatures and maintenance rules</h5><div class="table-responsive"><table class="table table-sm small"><thead><tr><th>Rule</th><th>Fault</th><th>Core symptoms (all required)</th><th>Supporting</th><th>Excluded by</th><th>Actions</th></tr></thead><tbody>`+
+ KB.faults.map(f=>`<tr><td>${f.rule}</td><td class="fw-semibold">${f.name}</td><td>${f.core.map(symTxt).join('<br>')}</td><td>${f.support.map(symTxt).join('<br>')||'-'}</td><td>${f.excludes.map(symTxt).join('<br>')||'-'}</td><td>${f.actions.map(a=>badge(a.class==='immediate'?'Immediate':'Routine',a.class==='immediate'?'danger':'secondary')+a.text).join('<br>')}</td></tr>`).join('')+`</tbody></table></div></div>
+ <div class="row g-3"><div class="col-lg-6"><div class="card p-3"><h5>Symptom rules</h5><table class="table table-sm small mb-0"><tbody>${KB.symptoms.map(s=>`<tr><td>${s.rule}</td><td>${s.text}</td></tr>`).join('')}</tbody></table></div></div>
+ <div class="col-lg-6"><div class="card p-3"><h5>Reference operating point</h5><p class="small text-body-secondary">Modelling assumption: binary tray column at atmospheric pressure. Values are synthetic references, not plant measurements.</p><table class="table table-sm small mb-0"><tbody>${KB.variables.map(v=>`<tr><td>${v.label}</td><td>${v.ref} ${u(v.unit)}</td></tr>`).join('')}</tbody></table></div></div></div>`;
+ $('#kb').innerHTML=h}
+
+function drawTests(){const t=TESTS,m=t.metrics,tile=(k,v)=>`<div class="col-6 col-md-3 col-xl"><div class="card p-3 text-center"><div class="h4 mb-0">${v}</div><div class="small text-body-secondary">${k}</div></div></div>`;
+ let h=`<div class="alert alert-info small">All 21 cases are synthetic test cases generated from the documented reference point. They are not industrial measurements.</div><div class="row g-3 mb-3">`+
+ tile('Accuracy (exact set)',pct(m.accuracy))+tile('Answer coverage',pct(m.coverage))+tile('Precision',pct(m.precision))+tile('Recall',pct(m.recall))+tile('F1 score',pct(m.f1))+
+ tile('Mean time (ms)',m.meanMs)+tile('Max time (ms)',m.maxMs)+tile('Explainability',pct(m.explainRate))+tile('Plan validity',pct(m.planValidity))+`</div>
+ <div class="row g-3 mb-3"><div class="col-lg-6"><div class="card p-3"><h6>Per-fault F1 score</h6><canvas id="cPc" height="260"></canvas></div></div>
+ <div class="col-lg-6"><div class="card p-3"><h6>Reasoning time per case (ms)</h6><canvas id="cTm" height="260"></canvas></div></div></div>
+ <div class="card p-3 mb-3"><h6>Ablation of reasoning modes</h6><table class="table table-sm small mb-0"><thead><tr><th>Mode</th><th>Accuracy</th><th>Precision</th><th>Recall</th><th>F1</th><th>Coverage</th></tr></thead><tbody>${t.ablation.map(a=>`<tr><td>${a.mode}</td><td>${pct(a.accuracy)}</td><td>${pct(a.precision)}</td><td>${pct(a.recall)}</td><td>${pct(a.f1)}</td><td>${pct(a.coverage)}</td></tr>`).join('')}</tbody></table></div>`;
+ const c=t.confusion,mx=Math.max(1,...c.matrix.flat());
+ h+=`<div class="card p-3 mb-3"><h6>Confusion matrix (rows: expected primary label, columns: predicted primary label)</h6><div class="table-responsive"><table class="table table-sm cm small mb-0"><thead><tr><th></th>${c.labels.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>${c.matrix.map((r,i)=>`<tr><th class="text-start">${c.labels[i]}</th>${r.map(v=>`<td style="background:rgba(79,134,198,${v?0.15+0.7*v/mx:0})">${v||''}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>
+ <div class="card p-3"><h6>Test cases</h6><div class="table-responsive"><table class="table table-sm small mb-0"><thead><tr><th>ID</th><th>Scenario</th><th>Expected</th><th>Predicted</th><th>Result</th><th></th></tr></thead><tbody>${t.cases.map(k=>`<tr><td>${k.id}</td><td>${k.name}</td><td>${k.expected.join(', ')}</td><td>${k.predicted.join(', ')}</td><td>${badge(k.exact?'Pass':'Fail',k.exact?'success':'danger')}</td><td><button class="btn btn-outline-primary btn-sm py-0" onclick="loadCase('${k.id}')">Load</button></td></tr>`).join('')}</tbody></table></div></div>`;
+ $('#val').innerHTML=h;
+ mkChart('cPc',{type:'bar',data:{labels:t.perClass.map(x=>x.label),datasets:[{data:t.perClass.map(x=>x.f1*100),backgroundColor:'#4f86c6'}]},options:{plugins:{legend:{display:false}},scales:{y:{max:100}}}});
+ mkChart('cTm',{type:'line',data:{labels:t.cases.map(x=>x.id),datasets:[{data:t.cases.map(x=>x.timeMs),borderColor:'#e9a23b',tension:.25}]},options:{plugins:{legend:{display:false}}}})}
+
+function drawTheory(){$('#theory').innerHTML=`<h4>Engineering and knowledge representation model</h4>
+<p>Let \\(F\\), \\(D\\), \\(B\\) be feed, distillate and bottoms molar flows and \\(L\\) the reflux flow. Overall and component balances, and the reflux ratio:</p>
+<div class="eq">\\[F=D+B,\\qquad Fz_F=Dx_D+Bx_B,\\qquad R=\\frac{L}{D}\\]</div>
+<p>Load factor \\(\\lambda=F/F_{\\mathrm{ref}}\\) rescales hydraulic and duty references (the default reference is replaced by an exception at off-nominal load):</p>
+<div class="eq">\\[\\Delta P_{\\mathrm{ref}}(\\lambda)=\\Delta P_0\\,\\lambda^{2},\\qquad Q_{\\mathrm{ref}}(\\lambda)=Q_0\\,\\lambda\\]</div>
+<p>Normalised deviation of a measurement \\(v\\) and mass-balance residual:</p>
+<div class="eq">\\[\\varepsilon_v=\\frac{v-v_{\\mathrm{ref}}}{v_{\\mathrm{ref}}},\\qquad \\varepsilon_{mb}=\\frac{F-D-B}{F}\\]</div>
+<p>Evidence for fault \\(F_k\\) uses weight 2 for each present core symptom and 1 for each present supporting symptom. Signature match and relative share are:</p>
+<div class="eq">\\[E(F_k)=\\sum_i w_i e_i(F_k),\\qquad M_k=\\frac{E(F_k)}{E_k^{\\max}},\\qquad C_k=\\frac{E(F_k)}{\\sum_j E(F_j)+\\epsilon}\\]</div>
+<p>Reasoning modes, with knowledge base \\(KB\\), evidence \\(E\\) and hypothesis set \\(\\Delta\\):</p>
+<div class="eq">\\[KB\\cup E\\models F,\\qquad \\Delta\\cup KB\\models E,\\qquad KB\\cup\\Delta\\cup E\\nvDash\\bot,\\qquad \\Delta^{*}=\\arg\\min_{\\Delta}|\\Delta|\\]</div>
+<p>Evaluation metrics, computed fault-wise over label sets:</p>
+<div class="eq">\\[\\mathrm{Precision}=\\frac{TP}{TP+FP},\\quad \\mathrm{Recall}=\\frac{TP}{TP+FN},\\quad F_1=\\frac{2\\,\\mathrm{Precision}\\,\\mathrm{Recall}}{\\mathrm{Precision}+\\mathrm{Recall}}\\]</div>
+<p class="small text-body-secondary mb-0">Inference runs in SWI-Prolog on the server. Symptom rules, fault signatures, exclusion constraints, abductive covers, maintenance rules and explanations are all Prolog clauses; this page only collects inputs and displays results.</p>`;
+ if(window.renderMathInElement)renderMathInElement($('#theory'),{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}]})}
+
+(async function(){setTheme(localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+ try{KB=await api('/api/kb');buildForm();drawKB();drawTheory();
+  TESTS=await api('/api/tests');$('#preset').innerHTML+=TESTS.cases.map(c=>`<option value="${c.id}">${c.id}: ${c.name}</option>`).join('');fill(TESTS.cases[0].obs);drawTests()}
+ catch(e){$('#err').textContent='Could not reach the Prolog server: '+e.message}})();
+</script></body></html>
