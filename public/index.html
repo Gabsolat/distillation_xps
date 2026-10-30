@@ -17,6 +17,8 @@ h1,h2,h3,h4,h5,.brand{font-family:Georgia,"Times New Roman",serif;letter-spacing
 .cm td{text-align:center;min-width:46px}
 .eq{overflow-x:auto;padding:.4rem 0}
 .small-label{font-size:.78rem}
+.advice{position:sticky;top:1rem;max-height:calc(100vh - 2rem);overflow:auto;border-left:4px solid var(--bs-primary)}
+.imm{padding-left:0;margin:0}.imm li{list-style:none;border-left:3px solid var(--bs-danger);padding-left:.55rem;margin-bottom:.45rem}
 </style></head>
 <body>
 <header class="topbar py-3"><div class="container d-flex justify-content-between align-items-center">
@@ -31,7 +33,7 @@ h1,h2,h3,h4,h5,.brand{font-family:Georgia,"Times New Roman",serif;letter-spacing
 <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#p-th" type="button">Theory</button></li></ul>
 <div class="tab-content">
 <div class="tab-pane fade show active" id="p-diag"><div class="row g-3">
-<div class="col-xl-4"><div class="card p-3">
+<div class="col-xl-3"><div class="card p-3">
 <h5>Plant observations</h5>
 <p class="small text-body-secondary">Enter the available measurements. Blank fields are treated as not observed, and the system never infers a missing value.</p>
 <label class="small-label mb-1">Load a validation scenario</label>
@@ -41,7 +43,8 @@ h1,h2,h3,h4,h5,.brand{font-family:Georgia,"Times New Roman",serif;letter-spacing
 <div class="row g-2" id="fields"></div>
 <div class="d-flex gap-2 mt-3"><button id="run" class="btn btn-primary flex-fill" type="button">Run diagnosis</button><button id="reset" class="btn btn-outline-secondary" type="button">Reset</button></div>
 <div id="err" class="text-danger small mt-2"></div></div></div>
-<div class="col-xl-8" id="result"><div class="card p-4 text-body-secondary">Run a diagnosis to see the verdict, explanation, reasoning trace and maintenance plan.</div></div>
+<div class="col-xl-5" id="result"><div class="card p-4 text-body-secondary">Run a diagnosis to see the verdict, explanation and reasoning trace.</div></div>
+<div class="col-xl-4"><div id="advice" class="card advice p-3"><h5>Expert advice</h5><p class="small text-body-secondary mb-0">The knowledge base will issue its recommendation, immediate actions, verification steps and escalation criteria here after a diagnosis.</p></div></div>
 </div></div>
 <div class="tab-pane fade" id="p-kb"><div id="kb"></div></div>
 <div class="tab-pane fade" id="p-val"><div id="val"><div class="card p-4">Loading validation suite...</div></div></div>
@@ -77,8 +80,8 @@ window.loadCase=loadCase;
 
 function render(r){LAST=r;const [st,cl]=STATUS[r.status],d=r.diagnoses||[];
  let h=`<div class="alert alert-${cl} d-flex justify-content-between flex-wrap mb-3"><div><strong>${st}</strong>${d.length?': '+d.map(x=>x.name).join('; '):''}</div><small>${r.nObs} observations, ${r.timeMs} ms, mode: ${r.mode}</small></div>`;
- h+=`<div class="row g-3"><div class="col-lg-7"><div class="card p-3"><h6>Deviation from load-corrected reference (percent)</h6><canvas id="cDev" height="240"></canvas></div></div>
- <div class="col-lg-5"><div class="card p-3"><h6>Evidence for selected hypotheses (percent)</h6>${d.length?'<canvas id="cEv" height="240"></canvas>':'<p class="small text-body-secondary mb-0">No fault hypothesis selected.</p>'}</div></div></div>`;
+ h+=`<div class="row g-3"><div class="col-12"><div class="card p-3"><h6>Deviation from load-corrected reference (percent)</h6><canvas id="cDev" height="240"></canvas></div></div>
+ <div class="col-12"><div class="card p-3"><h6>Evidence for selected hypotheses (percent)</h6>${d.length?'<canvas id="cEv" height="240"></canvas>':'<p class="small text-body-secondary mb-0">No fault hypothesis selected.</p>'}</div></div></div>`;
  const st5=(t,b)=>`<div class="st"><h6>${t}</h6>${b}</div>`,ar='<div class="ar">&rarr;</div>';
  h+=`<div class="card p-3 mt-3"><h6>Reasoning trace</h6><div class="flow">`+st5('1. Observations',`${r.nObs} validated measurements, ${r.deviations.length} normalised deviations`)+ar+
  st5('2. Derived symptoms',r.symptoms.map(s=>badge(s.rule,'primary')).join('')||'None')+ar+
@@ -93,10 +96,19 @@ function render(r){LAST=r;const [st,cl]=STATUS[r.status],d=r.diagnoses||[];
  <p class="small mb-1"><strong>Core evidence missing:</strong> ${x.missing.map(symTxt).join('; ')||'none'}</p>
  <p class="small mb-0">Signature match ${pct(x.match)}; relative evidence share ${pct(x.share)}. Explains ${x.explains.length} of ${r.symptoms.length} observed symptoms.</p></div>`});
  if(r.rejected.length)h+=`<div class="card p-3 mt-3"><h6>Competing hypotheses rejected</h6><table class="table table-sm mb-0 small"><tbody>${r.rejected.map(x=>`<tr><td class="fw-semibold">${x.name}</td><td>${x.reason}</td></tr>`).join('')}</tbody></table></div>`;
- if(r.plan.length)h+=`<div class="card p-3 mt-3"><h6>Corrective maintenance plan</h6><table class="table table-sm mb-0 small"><thead><tr><th>Priority</th><th>Fault</th><th>Action</th></tr></thead><tbody>${r.plan.map(p=>`<tr><td>${badge(p.class==='immediate'?'Immediate safety':'Routine',p.class==='immediate'?'danger':'secondary')}</td><td>${p.fault}</td><td>${p.action}</td></tr>`).join('')}</tbody></table></div>`;
- $('#result').innerHTML=h;
+ $('#result').innerHTML=h;renderAdvice(r);
  const dv=r.deviations;mkChart('cDev',{type:'bar',data:{labels:dv.map(x=>x.label),datasets:[{data:dv.map(x=>+(x.dev*100).toFixed(2)),backgroundColor:dv.map(x=>Math.abs(x.dev)>0.1?'#d1495b':'#4f86c6')}]},options:{indexAxis:'y',plugins:{legend:{display:false}},maintainAspectRatio:true}});
  if(d.length)mkChart('cEv',{type:'bar',data:{labels:d.map(x=>x.name),datasets:[{label:'Signature match',data:d.map(x=>x.match*100),backgroundColor:'#4f86c6'},{label:'Evidence share',data:d.map(x=>x.share*100),backgroundColor:'#e9a23b'}]},options:{scales:{y:{max:100}}}})}
+
+function renderAdvice(r){const a=r.advice,sc={critical:'danger',high:'warning',moderate:'info',none:'success',undetermined:'secondary'}[a.severity]||'secondary';
+ const list=(t,arr)=>arr.length?`<h6 class="mt-3 mb-1">${t}</h6><ul class="small ps-3 mb-0">${arr.map(i=>`<li class="mb-1"><span class="fw-semibold">${i.fault}:</span> ${i.text}</li>`).join('')}</ul>`:'';
+ const imm=a.immediate.length?`<h6 class="mt-3 mb-1 text-danger">Immediate actions</h6><ol class="imm small">${a.immediate.map(i=>`<li><span class="fw-semibold">${i.fault}:</span> ${i.text}</li>`).join('')}</ol>`:'';
+ $('#advice').innerHTML=`<div class="d-flex justify-content-between align-items-start"><h5 class="mb-2">Expert advice</h5>${badge(a.severity==='none'?'No action required':'Severity: '+a.severity,sc)}</div>
+ <p class="fw-semibold mb-1">${a.headline}</p><p class="small mb-1">${a.response}</p>${a.confidence!=='none'?`<p class="small text-body-secondary mb-0">Diagnostic confidence: ${a.confidence}</p>`:''}
+ ${imm}${list('Verify before further action',a.verify)}${list('Do not',a.avoid)}${list('Probable root causes',a.causes)}${list('Consequences if uncorrected',a.consequences)}${list('Monitor and recovery criteria',a.monitor)}
+ ${a.escalation?`<div class="alert alert-${sc} small mt-3 mb-0"><strong>Escalation:</strong> ${a.escalation}</div>`:''}
+ ${a.notes.length?`<h6 class="mt-3 mb-1">Engineering notes</h6><ul class="small ps-3 mb-0">${a.notes.map(n=>`<li class="mb-1">${n}</li>`).join('')}</ul>`:''}
+ ${list('Follow-up maintenance',a.routine)}`}
 
 function drawKB(){let h=`<div class="card p-3 mb-3"><h5>Fault signatures and maintenance rules</h5><div class="table-responsive"><table class="table table-sm small"><thead><tr><th>Rule</th><th>Fault</th><th>Core symptoms (all required)</th><th>Supporting</th><th>Excluded by</th><th>Actions</th></tr></thead><tbody>`+
  KB.faults.map(f=>`<tr><td>${f.rule}</td><td class="fw-semibold">${f.name}</td><td>${f.core.map(symTxt).join('<br>')}</td><td>${f.support.map(symTxt).join('<br>')||'-'}</td><td>${f.excludes.map(symTxt).join('<br>')||'-'}</td><td>${f.actions.map(a=>badge(a.class==='immediate'?'Immediate':'Routine',a.class==='immediate'?'danger':'secondary')+a.text).join('<br>')}</td></tr>`).join('')+`</tbody></table></div></div>

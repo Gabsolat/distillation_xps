@@ -136,6 +136,7 @@ act(pressureControl,immediate,'Place the pressure controller in manual and confi
 act(pressureControl,routine,'Calibrate the pressure transmitter and service the vent or condenser bypass valve.',true).
 act(leakage,immediate,'Isolate suspected leak points under area safety procedure and verify containment.',true).
 act(leakage,routine,'Perform flange, nozzle and exchanger tube-leak testing.',true).
+act(instrumentation,immediate,'Hold current set points and confirm the flagged reading against a redundant or local instrument before any process move.',true).
 act(instrumentation,routine,'Verify the flagged instrument against a reference, recalibrate, and avoid process moves based on the suspect reading.',true).
 
 % ---- Reasoning
@@ -214,9 +215,83 @@ diagnose(Obs,Mode,D) :-
     findall(_{id:S,rule:R,text:T},(member(S,Ids),symInfo(S,R,T)),Sy),
     findall(_{id:C,text:T},conflict(C,T),Cf),
     findall(R,(member(S,Ids),symInfo(S,R,_)),SR), findall(R,(member(F,Faults),sig(F,_,_,R)),FR), append(SR,FR,Rules),
+    advise(Status,Faults,Diags,Adv),
     get_time(T1), Ms0 is (T1-T0)*1000, r4(Ms0,Ms),
     D = _{status:Status,mode:Mode,nObs:N,timeMs:Ms,deviations:Dv,symptoms:Sy,conflicts:Cf,
-          diagnoses:Diags,rejected:Rej,plan:Plan,faults:Faults,rulesFired:Rules}.
+          advice:Adv,diagnoses:Diags,rejected:Rej,plan:Plan,faults:Faults,rulesFired:Rules}.
+
+% ---- Expert advice knowledge: know(Fault, Severity, Causes, Consequence, Verify, Avoid, Monitor)
+know(flooding,high,'Excess vapour or liquid load, plugged downcomers, fouled trays or packing.','Loss of separation, off-specification products and possible liquid carry-over into the overhead system.','Compare differential pressure with the load-corrected limit and check whether purity recovers after a load reduction.','Do not raise boilup or reflux to recover purity, because this deepens flooding.','Differential pressure, distillate purity and bottoms level, until differential pressure is within 10 percent of the load-corrected value.').
+know(weeping,moderate,'Operation below the minimum vapour rate, damaged valves or deck, worn weirs.','Reduced tray efficiency and rising bottoms impurity.','Confirm the vapour load is below the weeping limit and review recent turndown.','Do not reduce the vapour load further.','Differential pressure and bottoms impurity after the load is raised.').
+know(entrainment,moderate,'Excessive vapour velocity, small tray spacing, or foam-driven carry-over.','Heavy components carried upward, contaminating the distillate and loading the condenser.','Check the boilup trend against the load-corrected duty and review top-section differential pressure.','Do not hold boilup high to chase recovery.','Reboiler duty, distillate purity and differential pressure.').
+know(foaming,high,'Surface-active contaminants in the feed, high organic loading or depleted antifoam.','Level swell, high differential pressure, flooding and product carry-over.','Check the sump level trend, test a bottoms sample for foam stability and review recent feed composition changes.','Do not overdose antifoam without authorisation, because overdosing can foul internals.','Sump level, differential pressure and distillate purity.').
+know(fouling,moderate,'Polymer or scale deposition, corrosion products or solids in the feed.','Rising pressure drop, reduced capacity and loss of bottoms separation.','Trend differential pressure against load and compare it with the clean-column baseline.','Do not mask the rise by widening differential pressure alarm limits.','Differential pressure versus load and bottoms impurity.').
+know(condenser,high,'Fouled tubes, low cooling-water flow, high cooling-water temperature or non-condensables.','Rising column pressure, loss of reflux and possible relief valve lift.','Check cooling-water flow and temperature and vent any non-condensables.','Do not isolate the vent or relief path to hold pressure.','Top pressure, condenser duty and reflux drum level.').
+know(reflux,moderate,'Reflux pump or control valve problem, flow transmitter error or a set-point change.','Loss of rectification and off-specification distillate.','Compare reflux pump discharge pressure, valve position and the flow reading.','Do not compensate by cutting distillate flow before the reflux measurement is confirmed.','Reflux ratio, distillate purity and drum level.').
+know(reboiler,high,'Heating-medium supply loss, condensate backup, tube fouling or control valve failure.','Insufficient boilup, light-component contamination of the bottoms and possible weeping.','Check heating-medium supply pressure, trap operation and valve position.','Do not raise the feed rate until boilup is restored.','Reboiler duty, bottoms temperature and bottoms impurity.').
+know(feed,moderate,'Preheater fault, upstream temperature change or temperature controller problem.','Altered vapour and liquid loads, shifted temperature profile and degraded separation.','Verify feed temperature on a local gauge and check the preheater outlet temperature.','Do not retune column controllers before the feed condition is corrected.','Feed temperature, bottoms temperature and product compositions.').
+know(pressureControl,high,'Pressure controller or valve failure, vent system fault or transmitter drift.','Shifted relative volatility and temperature profile, with risk of overpressure or vacuum.','Compare the pressure transmitter with a local gauge and check valve position.','Do not change temperature set points to compensate.','Top pressure, valve position and top temperature.').
+know(leakage,critical,'Flange or gasket failure, exchanger tube leak or an open drain.','Loss of containment, safety and environmental hazard, and loss of mass balance closure.','Inspect for visible leaks with portable gas detection and check exchangers for tube-side contamination.','Do not approach suspected leak points without gas detection and an area permit.','Mass balance residual, drum level and area gas detectors.').
+know(instrumentation,moderate,'Sensor drift, fouled thermowell, failed transmitter or wiring fault.','Wrong control action driven by a false reading, which hides the true column state.','Cross-check with a redundant or local instrument and recalibrate.','Do not make process moves based on the flagged reading.','Flagged reading versus the redundant reading.').
+
+sevRank(critical,4). sevRank(high,3). sevRank(moderate,2). sevRank(low,1).
+sevInfo(critical,'Act immediately and notify the shift supervisor.','Prepare a controlled shutdown if key indicators do not begin recovering within 15 minutes of the immediate actions.').
+sevInfo(high,'Act within the current shift and notify the process engineer.','Escalate to the process engineer and consider a controlled shutdown if there is no recovery within 30 minutes.').
+sevInfo(moderate,'Plan correction within 24 hours while monitoring.','Escalate if the symptoms persist beyond one shift or worsen.').
+sevInfo(low,'Schedule at the next maintenance window.','Escalate if the symptoms worsen.').
+inter(flooding,feed,'Cold feed raises the liquid load on the trays: correct the feed temperature first, then reassess the flooding indicators.').
+inter(condenser,reflux,'Reduced condensation starves reflux: restore condenser duty before adjusting the reflux set point.').
+inter(reboiler,feed,'Both change the thermal balance: restore boilup first, then re-trim the feed preheater.').
+discr(flooding,foaming,'Flooding collapses purity and responds to load reduction, whereas foaming shows a rising sump level and responds to antifoam. Check the sump level trend and a bottoms sample.').
+
+kf(cause,F,T) :- know(F,_,T,_,_,_,_).
+kf(consequence,F,T) :- know(F,_,_,T,_,_,_).
+kf(verify,F,T) :- know(F,_,_,_,T,_,_).
+kf(avoid,F,T) :- know(F,_,_,_,_,T,_).
+kf(monitor,F,T) :- know(F,_,_,_,_,_,T).
+items(K,Faults,L) :- findall(_{fault:N,text:T},(member(F,Faults),fname(F,N),kf(K,F,T)),L).
+base(_{headline:'',severity:none,response:'',escalation:'',confidence:none,immediate:[],routine:[],verify:[],causes:[],consequences:[],avoid:[],monitor:[],notes:[]}).
+headline(diagnosed,NT,H) :- format(atom(H),'Diagnosis: ~w.',[NT]).
+headline(ambiguous,NT,H) :- format(atom(H),'Probable faults, not discriminated on current evidence: ~w.',[NT]).
+headline(hypothesis,NT,H) :- format(atom(H),'Unconfirmed hypothesis from abductive reasoning: ~w.',[NT]).
+confLevel(ambiguous,_,moderate) :- !.
+confLevel(hypothesis,_,low) :- !.
+confLevel(_,Diags,C) :-
+    findall(M,(member(D,Diags),get_dict(match,D,M)),Ms), length(Ms,N), N > 0, sum_list(Ms,S), Avg is S/N,
+    ( Avg >= 0.7 -> C = high ; Avg >= 0.5 -> C = moderate ; C = low ).
+confLevel(_,_,low).
+pairNotes(Pred,Faults,L) :- findall(T,(member(A,Faults),member(B,Faults),A @< B,(call(Pred,A,B,T);call(Pred,B,A,T))),L).
+notes(Status,Faults,Notes) :-
+    pairNotes(inter,Faults,N1),
+    (   Status == ambiguous
+    ->  pairNotes(discr,Faults,Na),
+        ( Na == [] -> N2 = ['Perform the discriminating check listed under verification for each hypothesis before committing to major corrective work.'] ; N2 = Na )
+    ;   N2 = [] ),
+    ( Status == hypothesis -> N3 = ['No complete signature matched. This is an abductive explanation and must be confirmed before intervention.'] ; N3 = [] ),
+    ( Status == diagnosed, Faults = [_,_|_] -> N4 = ['Several faults are present: address safety-critical items first and correct upstream causes before downstream symptoms.'] ; N4 = [] ),
+    append([N1,N2,N3,N4],Notes).
+
+% advise(+Status, +Faults, +Diagnoses, -Advice): expert recommendation assembled entirely from Prolog knowledge.
+advise(normal,_,_,A) :- !, base(B),
+    put_dict(_{headline:'Column operating inside its reference envelope. No corrective action is required.',response:'Continue routine operation.',confidence:high,
+        monitor:[_{fault:'All variables',text:'Continue routine trending of differential pressure, distillate purity and reboiler and condenser duties.'}]},B,A).
+advise(insufficient,_,_,A) :- !, base(B),
+    put_dict(_{headline:'Fewer than eight measurements were supplied. No diagnosis is issued because any fault label would be unjustified.',
+        response:'Supply additional measurements.',notes:['Distillate purity, differential pressure, top pressure and top temperature carry the most diagnostic information.']},B,A).
+advise(inconclusive,_,_,A) :- !, base(B),
+    put_dict(_{headline:'Abnormal symptoms are present, but no fault hypothesis is consistent with all of the evidence.',severity:undetermined,
+        response:'Treat as unconfirmed and do not intervene on a single indicator.',escalation:'Consult the process engineer and verify the instruments behind the abnormal symptoms.'},B,A).
+advise(Status,Faults,Diags,A) :-
+    findall(R-S,(member(F,Faults),know(F,S,_,_,_,_,_),sevRank(S,R)),Rs), max_member(M,Rs), M = _-Sev,
+    sevInfo(Sev,Resp,Esc),
+    findall(N,(member(F,Faults),fname(F,N)),Ns), atomic_list_concat(Ns,'; ',NT),
+    headline(Status,NT,H), confLevel(Status,Diags,Conf),
+    findall(_{fault:N,text:T},(member(F,Faults),act(F,immediate,T,P),call(P),fname(F,N)),Im),
+    findall(_{fault:N,text:T},(member(F,Faults),act(F,routine,T,P),call(P),fname(F,N)),Ro),
+    items(verify,Faults,Vf), items(cause,Faults,Ca), items(consequence,Faults,Co), items(avoid,Faults,Av), items(monitor,Faults,Mo),
+    notes(Status,Faults,Notes), base(B),
+    put_dict(_{headline:H,severity:Sev,response:Resp,escalation:Esc,confidence:Conf,immediate:Im,routine:Ro,verify:Vf,
+        causes:Ca,consequences:Co,avoid:Av,monitor:Mo,notes:Notes},B,A).
 
 % ---- Knowledge base summary for the interface
 kbSummary(D) :-
